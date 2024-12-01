@@ -1,0 +1,223 @@
+---
+title: "p8105_hw6_az2852"
+output: github_document
+---
+
+```{r setup, message=FALSE}
+library(tidyverse)
+library(modelr)
+library(mgcv)
+library(stringr)
+library(broom)
+```
+
+```{r}
+set.seed(1)
+```
+
+# Problem 2
+Load and prepare the homicide data.
+```{r}
+homicide = read_csv("data/homicide-data.csv")
+
+# Data preparation
+homicide_df = homicide %>%
+  mutate(city_state = str_c(city, state, sep = ", ")) %>%
+  mutate(solved = ifelse(disposition == "Closed by arrest", 1, 0)) %>%
+  filter(
+    !(city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL"))
+  ) %>%
+  filter(victim_race %in% c("White", "Black")) %>%
+  mutate(victim_age = as.numeric(victim_age))
+```
+Fit a logistic regression for Baltimore.
+```{r}
+baltimore_data = homicide_df %>%
+  filter(city_state == "Baltimore, MD")
+
+baltimore_model = glm(
+  solved ~ victim_age + victim_sex + victim_race,
+  data = baltimore_data,
+  family = binomial(link = "logit")
+)
+
+baltimore_results = broom::tidy(baltimore_model)
+
+# Calculate adjusted odds ratio (OR) and confidence intervals for male vs female victims
+baltimore_or = baltimore_results %>%
+  filter(term == "victim_sexMale") %>%
+  mutate(
+    odds_ratio = exp(estimate), # Adjusted OR
+    conf_low = exp(estimate - 1.96 * std.error), # Lower CI
+    conf_high = exp(estimate + 1.96 * std.error) # Upper CI
+  ) %>%
+  select(term, odds_ratio, conf_low, conf_high)
+
+```
+
+Regression model for each city
+```{r}
+city_results = homicide_df %>%
+  group_by(city_state) %>%
+  nest() %>%
+  mutate(
+    model = map(data, \(x) glm(solved ~ victim_age + victim_sex + victim_race, 
+                            data = x, 
+                            family = binomial(link = "logit"))), 
+    tidy_model = map(model, broom::tidy) 
+  ) %>%
+  unnest(tidy_model) %>% 
+  filter(term == "victim_sexMale") %>% 
+  mutate(
+    odds_ratio = exp(estimate), 
+    conf_low = exp(estimate - 1.96 * std.error), 
+    conf_high = exp(estimate + 1.96 * std.error) 
+  ) %>%
+  select(city_state, odds_ratio, conf_low, conf_high)
+```
+
+# Problem 3
+load and clean the data
+```{r}
+birthweight = read_csv("data/birthweight.csv")
+```
+```{r}
+birthweight_df = birthweight %>%
+  mutate(
+    babysex = factor(babysex, levels = c(1, 2), labels = c("Male", "Female")),
+    malform = factor(malform, levels = c(0, 1), labels = c("Absent", "Present")),
+    mrace = factor(mrace, levels = c(1, 2, 3, 4, 8), 
+                   labels = c("White", "Black", "Asian", "Puerto Rican", "Other")),
+    frace = factor(frace, levels = c(1, 2, 3, 4, 8, 9), 
+                   labels = c("White", "Black", "Asian", "Puerto Rican", "Other", "Unknown"))
+  )
+```
+
+check for missing values
+```{r}
+summary(birthweight_df)
+```
+Fit regression models of birth weight. We propose a model using gestational weeks, mother's age and smoking.
+```{r}
+# Predict birth weight using gestational age, mother's age, and smoking
+model_1 = lm(bwt ~ gaweeks + momage + smoken, data = birthweight_df)
+
+summary(model_1)
+
+# Add predictions and residuals
+data_with_preds = birthweight_df %>%
+  add_predictions(model_1, var = "fitted_bwt") %>%
+  add_residuals(model_1, var = "residuals_bwt")
+
+# Plot residuals against fitted values
+ggplot(data_with_preds, aes(x = fitted_bwt, y = residuals_bwt)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Residuals vs Fitted Values for Birth Weight Model",
+    x = "Fitted Values (Predicted Birth Weight)",
+    y = "Residuals"
+  ) +
+  theme_minimal()
+
+# Check residual normality with a histogram & Q-Q plot
+ggplot(data_with_preds, aes(x = residuals_bwt)) +
+  geom_histogram(binwidth = 50, fill = "blue", color = "black", alpha = 0.7) +
+  labs(
+    title = "Distribution of Residuals",
+    x = "Residuals",
+    y = "Frequency"
+  )
+
+qqnorm(data_with_preds$residuals_bwt)
+qqline(data_with_preds$residuals_bwt, col = "red")
+```
+The residual plot show a slight heteroscedasticity as lower birth weights have larger residuals than higher birth weights.
+
+The residual histogram appears to be bell-shaped.
+
+The QQ plot show that points fall on the diagonal line, except a slight deviation at the tails, but this may not be a concern considering the size of our data (4342 observations).
+
+## compare the proposed model with 2 alternative models
+```{r}
+# 2. Alternative model 1: length at birth and gestational age (main effects only)
+model_2 = lm(bwt ~ blength + gaweeks, data = birthweight_df)
+
+summary(model_2)
+# 3. Alternative model 2: head circumference, length, sex, and all interactions
+model_3 = lm(bwt ~ bhead * blength * babysex, data = birthweight_df)
+
+summary(model_3)
+```
+Now, do cross-validation between 3 models
+```{r}
+# create training and testing samples
+cv_df = 
+  crossv_mc(birthweight_df, 100) %>%
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+cv_df %>% pull(train) %>% nth(1) %>% as.tibble()
+```
+```{r}
+cv_res = 
+  cv_df |> #fit the regression models on training data
+  mutate(
+    model_1  = map(train, \(df) lm(bwt ~ gaweeks + momage + smoken, data = df)),
+    model_2  = map(train, \(df) lm(bwt ~ blength + gaweeks, data = df)),
+    model_3  = map(train, \(df) lm(bwt ~ bhead * blength * babysex, data = df))) |> #calculate the RMSE for the model fit on test data
+  mutate(
+    rmse_1 = map2_dbl(model_1, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_2 = map2_dbl(model_2, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_3 = map2_dbl(model_3, test, \(mod, df) rmse(model = mod, data = df)))
+
+cv_res
+```
+see the distribution of RMSE
+```{r}
+cv_res |> 
+  select(starts_with("rmse")) |> 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") |> 
+  mutate(model = fct_inorder(model))|> 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+Model 2 and 3 clearly outperforms model 1. Let's try revising model 1.
+
+We found that momage and smoken doesn't explain much of the variances. So for simplicity, we remove them and keep gaweeks and bhead * blength * babysex.
+```{r}
+model_1.5  = lm(bwt ~ gaweeks + bhead * blength * babysex, data = birthweight_df)
+
+summary(model_1.5)
+```
+```{r}
+cv_res2 = 
+  cv_df |> #fit the regression models on training data
+  mutate(
+    model_1.5  = map(train, \(df) lm(bwt ~ gaweeks + bhead * blength * babysex, data = df)),
+    model_2  = map(train, \(df) lm(bwt ~ blength + gaweeks, data = df)),
+    model_3  = map(train, \(df) lm(bwt ~ bhead * blength * babysex, data = df))) |> #calculate the RMSE for the model fit on test data
+  mutate(
+    rmse_1.5 = map2_dbl(model_1.5, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_2 = map2_dbl(model_2, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_3 = map2_dbl(model_3, test, \(mod, df) rmse(model = mod, data = df)))
+
+cv_res2
+```
+```{r}
+cv_res2 |> 
+  select(starts_with("rmse")) |> 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") |> 
+  mutate(model = fct_inorder(model))|> 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+Model 1.5 seems to be slightly better than model 3. Including gaweeks in addition to the interactions between bhead * blength * babysex is a reasonable choice.
