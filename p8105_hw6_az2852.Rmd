@@ -166,7 +166,7 @@ qqnorm(data_with_preds$residuals_bwt)
 qqline(data_with_preds$residuals_bwt, col = "red")
 ```
 
-The residual plot show a random pattern with points evenly distributed above and below the horizontal line. There are a few outliers with high residuals.
+Most residuals are centered around zero, forming a dense cluster near the horizontal line, which is a good sign. There seems to be a wider spread of residuals at the lower end of fitted values (below 1000) and possibly at the higher end. A few points (above 2000 or below -1000) stand out significantly, indicating potential outliers in the data.
 
 The residual histogram appears to be roughly bell-shaped but with outliers on the higher end.
 
