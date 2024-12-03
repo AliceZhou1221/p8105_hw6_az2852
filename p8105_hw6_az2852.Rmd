@@ -129,6 +129,8 @@ birthweight_df = birthweight %>%
 check for missing values
 ```{r}
 summary(birthweight_df)
+
+colSums(is.na(birthweight_df))
 ```
 Fit regression models of birth weight. We want to explore the relationship between different biological and maternal health factors and baby weight. To do so, we begin with predictors gestational age, smoking status, mother's delivery weight, baby's head circumference, length, and sex. We found a main effect for gestational age, mother's delivery weight, baby's head circumference, length, and sex respectively, and significant interactions between head circumference, length, and sex. We did not find a main effect for smoking nor any interaction effect of smoking with other variables. 
 ```{r}
